@@ -18,11 +18,25 @@ def _key(value: Any) -> str:
     normalized = unicodedata.normalize('NFKC', str(value or '')).casefold()
     return re.sub('[\\W_]+', '', normalized, flags=re.UNICODE)
 
+_TERM_PATTERN_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _term_pattern(term: str) -> re.Pattern[str]:
+    """同一个词只编译一次；否则每次召回都会重新编译上万个正则，慢 2 秒以上。"""
+    compiled = _TERM_PATTERN_CACHE.get(term)
+    if compiled is None:
+        if len(_TERM_PATTERN_CACHE) > 20000:
+            _TERM_PATTERN_CACHE.clear()
+        pattern = f'(?<![A-Za-z0-9_.-]){re.escape(term)}(?![A-Za-z0-9_.-])' if re.fullmatch('[A-Za-z0-9_.-]+', term) else re.escape(term)
+        compiled = re.compile(pattern, re.IGNORECASE)
+        _TERM_PATTERN_CACHE[term] = compiled
+    return compiled
+
+
 def _term_spans(text: str, term: str, *, limit: int=8) -> list[tuple[int, int]]:
     if not text or not term:
         return []
-    pattern = f'(?<![A-Za-z0-9_.-]){re.escape(term)}(?![A-Za-z0-9_.-])' if re.fullmatch('[A-Za-z0-9_.-]+', term) else re.escape(term)
-    return [match.span() for match in list(re.finditer(pattern, text, re.IGNORECASE))[:limit]]
+    return [match.span() for match in list(_term_pattern(term).finditer(text))[:limit]]
 
 def _query_intent(query: str) -> tuple[str, str]:
     for intent, operator, pattern in _INTENT_PATTERNS:
